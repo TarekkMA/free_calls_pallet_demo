@@ -5,7 +5,7 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*};
+	use frame_support::{dispatch::DispatchResult, log, pallet_prelude::*};
 	use frame_support::weights::GetDispatchInfo;
 	use frame_system::pallet_prelude::*;
 	use frame_system::RawEvent;
@@ -76,6 +76,11 @@ pub mod pallet {
 		Test(u32),
 	}
 
+	#[pallet::error]
+	pub enum Error<T> {
+		TestCannotAddZeroes,
+	}
+
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
 	// These functions materialize as "extrinsics", which are often compared to transactions.
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
@@ -103,14 +108,16 @@ pub mod pallet {
 		}
 
 		#[pallet::weight(10_000)]
-		pub fn test(origin: OriginFor<T>, n1: u32, n2: u32) -> DispatchResult {
-			let sender = ensure_signed(origin.clone())?;
+		pub fn call_test(origin: OriginFor<T>, n1: u32, n2: u32) -> DispatchResult {
+			let _ = ensure_signed(origin)?;
+
+			ensure!(n1 + n2 != 0, Error::<T>::TestCannotAddZeroes);
+
 			Self::deposit_event(Event::Test(n1 + n2));
 
 			Ok(())
 		}
 	}
-
 
 	struct Window<T: Config> {
 		account: T::AccountId,
@@ -133,7 +140,7 @@ pub mod pallet {
 
 			let window_index = current_block / config.period;
 
-			let reset_stats = || { WindowStats::new(current_block) };
+			let reset_stats = || { WindowStats::new(window_index) };
 
 			let mut stats = window_stats.unwrap_or_else(reset_stats);
 
@@ -154,7 +161,7 @@ pub mod pallet {
 		}
 
 		fn increment_window_stats(&mut self) {
-			self.stats.num_of_calls.saturating_add(1);
+			self.stats.num_of_calls = self.stats.num_of_calls.saturating_add(1);
 			<WindowStatsByAccount<T>>::insert(self.account.clone(), self.config_index, self.stats.clone());
 		}
 	}
@@ -187,9 +194,12 @@ pub mod pallet {
 			}
 
 			if can_call {
+				log::info!("{:?} can have this free call", account);
 				for window in &mut windows {
 					window.increment_window_stats();
 				}
+			} else {
+				log::info!("{:?} don't have free calls", account);
 			}
 
 			can_call

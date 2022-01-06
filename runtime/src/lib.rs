@@ -278,8 +278,8 @@ impl pallet_sudo::Config for Runtime {
 parameter_types! {
 	pub FreeCallsWindowsConfig: Vec<WindowConfig<BlockNumber>> = [
 		WindowConfig {
-			period: 1 * MINUTES,
-			max_num_of_calls: 10,
+			period: MINUTES / 2,
+			max_num_of_calls: 3,
 		}
 	].to_vec();
 }
@@ -307,7 +307,7 @@ construct_runtime!(
 		TransactionPayment: pallet_transaction_payment,
 		Sudo: pallet_sudo,
 		// Include the custom logic from the pallet-template in the runtime.
-		TemplateModule: pallet_free_calls,
+		FreeCalls: pallet_free_calls,
 	}
 );
 
