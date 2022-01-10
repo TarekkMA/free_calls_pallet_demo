@@ -2,19 +2,29 @@
 
 pub use pallet::*;
 
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod test_pallet;
+
+#[cfg(test)]
+mod tests;
 
 #[frame_support::pallet]
 pub mod pallet {
 	use frame_support::{dispatch::DispatchResult, log, pallet_prelude::*};
 	use frame_support::weights::GetDispatchInfo;
 	use frame_system::pallet_prelude::*;
-	use frame_system::RawEvent;
 	use sp_runtime::traits::Dispatchable;
 	use sp_std::boxed::Box;
 	use sp_std::vec::Vec;
 	use scale_info::TypeInfo;
+	use sp_std::cmp::max;
 
 
+	// TODO: find a better name
+	pub type QuotaSharePerWindow = u16;
 	pub type NumberOfCalls = u16;
 	pub type WindowConfigsSize = u8;
 
@@ -38,7 +48,7 @@ pub mod pallet {
 	#[scale_info(skip_type_params(T))]
 	pub struct WindowConfig<BlockNumber> {
 		pub period: BlockNumber,
-		pub max_num_of_calls: NumberOfCalls,
+		pub quota_ratio: QuotaSharePerWindow,
 	}
 
 	#[pallet::pallet]
@@ -53,11 +63,25 @@ pub mod pallet {
 
 		#[pallet::constant]
 		type WindowsConfig: Get<Vec<WindowConfig<Self::BlockNumber>>>;
+
+		type ManagerOrigin: EnsureOrigin<Self::Origin>;
 	}
 
 
 	#[pallet::storage]
+	#[pallet::getter(fn quota_by_account)]
+	/// Keeps track of what accounts own what Kitty.
+	pub(super) type QuotaByAccount<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		T::AccountId,
+		NumberOfCalls,
+		OptionQuery,
+	>;
+
+	#[pallet::storage]
 	#[pallet::getter(fn window_stats_by_account)]
+	/// Keeps track of each windows usage for each account.
 	pub(super) type WindowStatsByAccount<T: Config> = StorageDoubleMap<
 		_,
 		Blake2_128Concat,
@@ -73,12 +97,6 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		/// free call was executed. [who, result]
 		FreeCallResult(T::AccountId, DispatchResult),
-		Test(u32),
-	}
-
-	#[pallet::error]
-	pub enum Error<T> {
-		TestCannotAddZeroes,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -86,6 +104,7 @@ pub mod pallet {
 	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
+		// TODO: fix weight
 		#[pallet::weight(10_000)]
 		pub fn try_free_call(origin: OriginFor<T>, call: Box<<T as Config>::Call>) -> DispatchResult {
 			let sender = ensure_signed(origin.clone())?;
@@ -107,13 +126,12 @@ pub mod pallet {
 			Ok(())
 		}
 
+
 		#[pallet::weight(10_000)]
-		pub fn call_test(origin: OriginFor<T>, n1: u32, n2: u32) -> DispatchResult {
-			let _ = ensure_signed(origin)?;
+		pub fn change_account_quota(origin: OriginFor<T>, account: T::AccountId, quota: NumberOfCalls) -> DispatchResult {
+			let _ = T::ManagerOrigin::ensure_origin(origin);
 
-			ensure!(n1 + n2 != 0, Error::<T>::TestCannotAddZeroes);
-
-			Self::deposit_event(Event::Test(n1 + n2));
+			<QuotaByAccount<T>>::insert(account, quota);
 
 			Ok(())
 		}
@@ -131,6 +149,7 @@ pub mod pallet {
 	impl<T: Config> Window<T> {
 		fn build(
 			account: T::AccountId,
+			quota: NumberOfCalls,
 			current_block: T::BlockNumber,
 			config_index: WindowConfigsSize,
 			config: WindowConfig<T::BlockNumber>,
@@ -148,7 +167,7 @@ pub mod pallet {
 				stats = reset_stats();
 			}
 
-			let can_be_called = stats.num_of_calls < config.max_num_of_calls;
+			let can_be_called = stats.num_of_calls < max(1, quota / config.quota_ratio);
 
 			Window {
 				account: account.clone(),
@@ -170,7 +189,12 @@ pub mod pallet {
 		fn can_make_free_call_and_update_stats(account: &T::AccountId) -> bool {
 			let current_block = <frame_system::Pallet<T>>::block_number();
 			let windows_config = T::WindowsConfig::get();
+			let quota = Self::quota_by_account(account);
 
+			let quota = match quota {
+				Some(quota) => quota,
+				None => return false,
+			};
 
 			let mut windows: Vec<Window<T>> = Vec::new();
 			let mut can_call = false;
@@ -181,6 +205,7 @@ pub mod pallet {
 				let config_index = config_index as WindowConfigsSize;
 				let window = Window::build(
 					account.clone(),
+					quota,
 					current_block,
 					config_index,
 					config,

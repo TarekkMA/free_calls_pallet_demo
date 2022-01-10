@@ -279,7 +279,7 @@ parameter_types! {
 	pub FreeCallsWindowsConfig: Vec<WindowConfig<BlockNumber>> = [
 		WindowConfig {
 			period: MINUTES / 2,
-			max_num_of_calls: 3,
+			quota_ratio: 3,
 		}
 	].to_vec();
 }
@@ -289,6 +289,8 @@ impl pallet_free_calls::Config for Runtime {
 	type Event = Event;
 	type Call = Call;
 	type WindowsConfig = FreeCallsWindowsConfig;
+	// TODO change this
+	type ManagerOrigin = frame_system::EnsureRoot<AccountId>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
